@@ -1,10 +1,13 @@
 const port = process.argv[2];
-const url=process.argv[3];
+const url = process.argv[3];
 const express = require("express");
 const bodyParser = require("body-parser");
 const Blockchain = require("./blockchain");
 const {v4: uuidv4} = require("uuid");
-const fetch = import("node-fetch");
+// const fetch = import("node-fetch");
+// import fetch from 'node-fetch';
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+
 const etherium = new Blockchain();
 const app = express();
 const nodeAddress = uuidv4().replaceAll("-", "");
@@ -49,9 +52,10 @@ app.get("/mine", function (req, res) {
 //end point of entry point to add a new node ,so we add and broadcast it to the network
 app.post("/add-and-broadcast-node", function (req, res) {
     const newNodeUrl = req.body.newNodeUrl;
+    // console.log("the new node requested to be added : "+newNodeUrl);
     let body;
     const promises = [];
-    if (etherium.networkNodes.indexOf(newNodeUrl) < 0) {
+    if (newNodeUrl !== url && etherium.networkNodes.indexOf(newNodeUrl) < 0) {
         body = {
             "nodeUrl": newNodeUrl
         }
@@ -63,17 +67,17 @@ app.post("/add-and-broadcast-node", function (req, res) {
                 headers: {'Content-Type': 'application/json'}
             }));
         });
-        etherium.networkNodes.push(newNodeUrl);
+
         Promise.all(promises).then(function () {
             //TODO: add bulk
             body = {
-                "nodes": [url,...etherium.networkNodes]
+                "nodes": [url, ...etherium.networkNodes]
             }
-            fetch(`${newNodeUrl}/add-bulk`,{
+            fetch(`${newNodeUrl}/add-bulk`, {
                 method: 'post',
                 body: JSON.stringify(body),
                 headers: {'Content-Type': 'application/json'}
-            }).then(function (){
+            }).then(function () {
                 res.json({
                     'note': "node added successfully",
                     'added-node': newNodeUrl,
@@ -82,6 +86,7 @@ app.post("/add-and-broadcast-node", function (req, res) {
             });
 
         });
+        etherium.networkNodes.push(newNodeUrl);
 
     } else {
         res.json({
@@ -95,15 +100,14 @@ app.post("/add-and-broadcast-node", function (req, res) {
 // end point to add an end point
 app.post("/add-node", function (req, res) {
     const newNodeUrl = req.body.nodeUrl;
-    if (etherium.networkNodes.indexOf(newNodeUrl) < 0) {
+    if (newNodeUrl !== url && etherium.networkNodes.indexOf(newNodeUrl) < 0) {
         etherium.networkNodes.push(newNodeUrl);
         res.json({
             'note': "node added successfully",
             'added-node': newNodeUrl,
             'new-blockchain-nodes': etherium.networkNodes
         });
-    }
-    else {
+    } else {
         res.json({
             'note': "node already exists",
             'added-node': newNodeUrl,
@@ -113,12 +117,15 @@ app.post("/add-node", function (req, res) {
 });
 
 // end point to add the existing network to the new node ,so we bulk add nodes
-app.post("add-bulk", function (req, res) {
-    const nodes= req.body.nodes;
-    if(nodes.length>0){
-        etherium.networkNodes=nodes;
+app.post("/add-bulk", function (req, res) {
+    const nodes = req.body.nodes;
+    if (nodes.length > 0) {
+        nodes.forEach(node => {
+            if (node !== url && etherium.networkNodes.indexOf(node) < 0) {
+                etherium.networkNodes.push(node);
+            }
+        })
     }
-    // res.ok;
     res.send("ok");
 });
 
