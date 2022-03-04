@@ -4,8 +4,6 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const Blockchain = require("./blockchain");
 const {v4: uuidv4} = require("uuid");
-// const fetch = import("node-fetch");
-// import fetch from 'node-fetch';
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 const etherium = new Blockchain();
@@ -13,7 +11,7 @@ const app = express();
 const nodeAddress = uuidv4().replaceAll("-", "");
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({extended: false}));
-// etherium.networkNodes.push(url);
+
 //Testing End point
 app.get("/", function (req, res) {
     //   res.send("Blockchain Api Works , Test succeed !!");
@@ -23,15 +21,33 @@ app.get("/", function (req, res) {
 app.get("/blockchain", function (req, res) {
     res.send(etherium);
 });
-//end point to create a transaction
-app.post("/new-transaction", function (req, res) {
-    etherium.createNewTransaction(
+//end point to create a transaction and broadcast it
+app.post("/create-transaction-and-broadcast", function (req, res) {
+    const transaction = etherium.createNewTransaction(
         req.body.amount,
         req.body.sender,
         req.body.recipient
     );
-    res.send("transaction created successfully");
+    etherium.addTransaction(transaction);
+    const promises = [];
+    etherium.networkNodes.forEach(nodeUrl => {
+        promises.push(fetch(`${nodeUrl}/add-transaction`, {
+            method: "post",
+            body: JSON.stringify({
+                transaction: transaction
+            }),
+            headers: {'Content-Type': 'application/json'}
+        }));
+    })
+    Promise.all(promises).then(() => {
+        res.send("transaction created successfully");
+    })
 });
+//end point to add transaction from a broadcast
+app.post("/add-transaction", function (req, res) {
+    etherium.addTransaction(req.body.transaction);
+    res.send("transaction added successfully");
+})
 //endpoint to mine
 app.get("/mine", function (req, res) {
     const previousBlockHash = etherium.getLastBlock().hash;
@@ -42,12 +58,45 @@ app.get("/mine", function (req, res) {
     const nonce = etherium.proofOfWork(previousBlockHash, currentBlockData);
     const hash = etherium.hashBlock(previousBlockHash, currentBlockData, nonce);
     const block = etherium.createNewBlock(nonce, previousBlockHash, hash);
-    etherium.createNewTransaction(6.25, "0X0", nodeAddress);
-    res.json({
-        note: `you mined block with index ${block.index} with hash ${block.hash}`,
-        block,
+    const transaction = etherium.createNewTransaction(6.25, "0X0", nodeAddress);
+    etherium.addTransaction(transaction);
+    const promises = [];
+    etherium.networkNodes.forEach(nodeUrl => {
+        promises.push(fetch(`${nodeUrl}/add-block`, {
+            method: "post",
+            body: JSON.stringify({
+                block
+            }),
+            headers: {'Content-Type': 'application/json'}
+        }).then(function () {
+            fetch(`${nodeUrl}/add-transaction`, {
+                method: "post",
+                body: JSON.stringify({
+                    transaction
+                }),
+                headers: {'Content-Type': 'application/json'}
+            })
+        }))
+    });
+    Promise.all(promises).then(function () {
+        res.json({
+            note: `you mined block with index ${block.index} with hash ${block.hash}`,
+            block,
+        });
     });
 });
+
+//end point to add new block in blockchain after get mined
+app.post("/add-block", function (req, res) {
+    const block = req.body.block;
+    const lastBlock = etherium.getLastBlock();
+    if (block.previousBlockHash === lastBlock.hash && block.index === (lastBlock.index + 1)) {
+        etherium.createNewBlock(block.nonce, block.previousBlockHash, block.hash);
+        res.send("block added successfully");
+    }else {
+        res.send("block was not added something went wrong ");
+    }
+})
 
 //end point of entry point to add a new node ,so we add and broadcast it to the network
 app.post("/add-and-broadcast-node", function (req, res) {
